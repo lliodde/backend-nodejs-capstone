@@ -22,16 +22,7 @@ connectToDatabase().then(() => {
 app.use(express.json());
 
 // Route files
-
-// authRoutes Step 2: import the authRoutes and store in a constant called authRoutes
-//{{insert code here}}
-
-// Items API Task 1: import the secondChanceItemsRoutes and store in a constant called secondChanceItemsRoutes
-//{{insert code here}}
 const secondChanceItemsRoutes = require('./routes/secondChanceItemsRoutes');
-
-// Search API Task 1: import the searchRoutes and store in a constant called searchRoutes
-//{{insert code here}}
 const searchRoutes = require('./routes/searchRoutes');
 
 
@@ -41,16 +32,44 @@ const logger = require('./logger');
 app.use(pinoHttp({ logger }));
 
 // Use Routes
-// authRoutes Step 2: add the authRoutes and to the server by using the app.use() method.
-//{{insert code here}}
-
-// Items API Task 2: add the secondChanceItemsRoutes to the server by using the app.use() method.
-//{{insert code here}}
 app.use('/api/secondchance/items', secondChanceItemsRoutes);
-
-// Search API Task 2: add the searchRoutes to the server by using the app.use() method.
-//{{insert code here}}
 app.use('/api/secondchance/search', searchRoutes);
+
+
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// ★★★ THIS IS THE NEW SENTIMENT ANALYSIS ROUTE YOU NEED TO ADD ★★★
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+app.post('/sentiment/analysis', (req, res) => {
+    try {
+        // Task 4: extract the sentence parameter from the query string
+        const { sentence } = req.query;
+
+        // A simple check to make sure the sentence parameter exists
+        if (!sentence) {
+            return res.status(400).json({ message: 'A sentence query parameter is required.' });
+        }
+
+        // This is a placeholder for a real sentiment analysis.
+        // We'll simulate a 'score' based on the length of the sentence for this example.
+        const analysisResult = sentence.length - 30; // Dummy score calculation
+
+        // Task 5: set sentiment to negative or positive based on score rules
+        let sentiment = 'neutral';
+        if (analysisResult > 0) {
+            sentiment = 'positive';
+        } else if (analysisResult < 0) {
+            sentiment = 'negative';
+        }
+        
+        // Task 6: send a status code of 200 with the result
+        res.status(200).json({ sentimentScore: analysisResult, sentiment: sentiment });
+
+    } catch (error) {
+        logger.error(`Error performing sentiment analysis: ${error}`);
+        // Task 7: if there is an error, return a HTTP code of 500
+        res.status(500).json({ message: 'Error performing sentiment analysis' });
+    }
+});
 
 
 // Global Error Handler
