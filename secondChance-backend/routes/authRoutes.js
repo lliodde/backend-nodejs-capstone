@@ -1,34 +1,40 @@
 const express = require('express');
 const bcryptjs = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const router = express.Router();
 const connectToDatabase = require('../models/db');
-const logger = require('../logger');
+const router = express.Router();
+const dotenv = require('dotenv');
+const pino = require('pino');  // Import Pino logger
 
-// The JWT secret from your .env file
+//Task 1: Use the `body`,`validationResult` from `express-validator` for input validation
+const { body, validationResult } = require('express-validator');
+
+
+const logger = pino();  // Create a Pino logger instance
+
+dotenv.config();
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// --- EXISTING /register ROUTE ---
-router.post('/register', async (req, res, next) => {
+router.post('/register', async (req, res) => {
     try {
-        const { email, password, firstName, lastName } = req.body;
+      //Connect to `secondChance` in MongoDB through `connectToDatabase` in `db.js`.
+      const db = await connectToDatabase();
+      const collection = db.collection("users");
+      const existingEmail = await collection.findOne({ email: req.body.email });
 
-        const db = await connectToDatabase();
-        const collection = db.collection("users");
-
-        const existingUser = await collection.findOne({ email: email });
-        if (existingUser) {
-            logger.error('Registration failed: Email already exists');
-            return res.status(409).json({ message: 'An account with this email already exists.' });
+        if (existingEmail) {
+            logger.error('Email id already exists');
+            return res.status(400).json({ error: 'Email id already exists' });
         }
 
         const salt = await bcryptjs.genSalt(10);
-        const hash = await bcryptjs.hash(password, salt);
-
+        const hash = await bcryptjs.hash(req.body.password, salt);
+        const email=req.body.email;
+        console.log('email is',email);
         const newUser = await collection.insertOne({
-            email: email,
-            firstName: firstName,
-            lastName: lastName,
+            email: req.body.email,
+            firstName: req.body.firstName,
+            lastName: req.body.lastName,
             password: hash,
             createdAt: new Date(),
         });
@@ -38,67 +44,109 @@ router.post('/register', async (req, res, next) => {
                 id: newUser.insertedId,
             },
         };
-        const authtoken = jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
 
+        const authtoken = jwt.sign(payload, JWT_SECRET);
         logger.info('User registered successfully');
-
-        res.status(201).json({ authtoken, email });
-
+        res.json({ authtoken,email });
     } catch (e) {
-        logger.error(`Registration error: ${e}`);
-        next(e);
+        logger.error(e);
+        return res.status(500).send('Internal server error');
     }
 });
 
+router.post('/login', async (req, res) => {
+    console.log("\n\n Inside login")
 
-// ★★★ NEW /login ROUTE ★★★
-router.post('/login', async (req, res, next) => {
     try {
-        const { email, password } = req.body;
+        // const collection = await connectToDatabase();
+        const db = await connectToDatabase();
+        const collection = db.collection("users");
+        const theUser = await collection.findOne({ email: req.body.email });
 
-        // 1. & 2. Connect to DB and access the 'users' collection
+        if (theUser) {
+            let result = await bcryptjs.compare(req.body.password, theUser.password)
+            if(!result) {
+                logger.error('Passwords do not match');
+                return res.status(404).json({ error: 'Wrong pasword' });
+            }
+            let payload = {
+                user: {
+                    id: theUser._id.toString(),
+                },
+            };
+
+            const userName = theUser.firstName;
+            const userEmail = theUser.email;
+
+            const authtoken = jwt.sign(payload, JWT_SECRET);
+            logger.info('User logged in successfully');
+            return res.status(200).json({ authtoken, userName, userEmail });
+        } else {
+            logger.error('User not found');
+            return res.status(404).json({ error: 'User not found' });
+        }
+    } catch (e) {
+        logger.error(e);
+        return res.status(500).json({ error: 'Internal server error', details: e.message });
+      }
+});
+
+// update API
+router.put('/update', async (req, res) => {
+    // Task 2: Validate the input using `validationResult` and return approiate message if there is an error.
+
+    const errors = validationResult(req);
+
+    // Task 3: Check if `email` is present in the header and throw an appropriate error message if not present.
+    if (!errors.isEmpty()) {
+        logger.error('Validation errors in update request', errors.array());
+        return res.status(400).json({ errors: errors.array() });
+    }
+
+    try {
+        const email = req.headers.email;
+
+        if (!email) {
+            logger.error('Email not found in the request headers');
+            return res.status(400).json({ error: "Email not found in the request headers" });
+        }
+
+        //Task 4: Connect to MongoDB
         const db = await connectToDatabase();
         const collection = db.collection("users");
 
-        // 3. Check for user credentials in the database
-        const theUser = await collection.findOne({ email: email });
+        //Task 5: Find user credentials
+        const existingUser = await collection.findOne({ email });
 
-        // 7. Send an appropriate message if the user is not found
-        if (!theUser) {
-            logger.error(`Login attempt for non-existent user: ${email}`);
-            return res.status(404).json({ error: 'User not found' });
+        if (!existingUser) {
+            logger.error('User not found');
+            return res.status(404).json({ error: "User not found" });
         }
 
-        // 4. Check if the password matches the encrypted password
-        const isMatch = await bcryptjs.compare(password, theUser.password);
-        if (!isMatch) {
-            logger.error(`Invalid login attempt for user: ${email}`);
-            // Use a generic error message for security
-            return res.status(400).json({ error: 'Invalid credentials' });
-        }
+        existingUser.firstName = req.body.name;
+        existingUser.updatedAt = new Date();
 
-        // 5. Fetch user details from the database
-        const userName = theUser.firstName;
-        const userEmail = theUser.email;
-        
-        // 6. Create JWT authentication
+        //Task 6: Update user credentials in DB
+        const updatedUser = await collection.findOneAndUpdate(
+            { email },
+            { $set: existingUser },
+            { returnDocument: 'after' }
+        );
+
+        //Task 7: Create JWT authentication with user._id as payload using secret key from .env file
         const payload = {
             user: {
-                id: theUser._id.toString(), // Use the found user's ID
+                id: updatedUser._id.toString(),
             },
         };
-        const authtoken = jwt.sign(payload, JWT_SECRET, { expiresIn: '1h' });
-        
-        logger.info(`User logged in successfully: ${email}`);
-        
-        // Send the final response
-        res.json({ authtoken, userName, userEmail });
 
-    } catch (e) {
-         logger.error(`Login error: ${e}`);
-         next(e);
+        const authtoken = jwt.sign(payload, JWT_SECRET);
+        logger.info('User updated successfully');
+
+        res.json({ authtoken });
+    } catch (error) {
+        logger.error(error);
+        return res.status(500).send("Internal Server Error");
     }
 });
-
-
 module.exports = router;
